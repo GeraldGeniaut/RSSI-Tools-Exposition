@@ -1,0 +1,92 @@
+# 2. Les sources : ce qu'elles disent et leurs limites
+
+Toutes les sources sont interrogées en lecture, via leurs API publiques. Aucune donnée de l'établissement n'est
+envoyée, à part le **nom de domaine**, les **mots-clés** et les **adresses IP publiques** recherchés.
+
+---
+
+## Hudson Rock — identifiants volés par des infostealers
+
+**Ce que c'est.** Société de renseignement spécialisée dans les *infostealers* : des logiciels malveillants qui
+volent les mots de passe enregistrés dans les navigateurs, les cookies et l'historique d'une machine infectée.
+Ces « logs » sont revendus sur des places de marché ; c'est aujourd'hui la première source de comptes compromis.
+
+**Ce que l'outil récupère.** Via l'API gratuite de recherche par domaine, quatre compteurs :
+
+| Compteur | Signification | Gravité d'une hausse |
+|---|---|---|
+| `employees` | machines infectées où un identifiant **de votre domaine** a été volé (vos agents) | **critique** |
+| `users` | personnes extérieures (usagers, étudiants…) dont les identifiants sur **vos services en ligne** ont été volés | moyenne |
+| `third_parties` | identifiants liés à votre domaine sur des services tiers | moyenne |
+| `totalUrls` | nombre d'URL de vos services présentes dans ces logs | moyenne |
+
+**Comment l'exploiter.** Le site public de Hudson Rock (recherche par domaine) détaille les URL concernées.
+Le propriétaire du domaine peut demander le détail nominatif (« Ethical Disclosure »). Pour un employé :
+réinitialiser le mot de passe, révoquer les sessions (M365/Entra…), vérifier les méthodes MFA, traiter la machine.
+Pour vos services exposés : limitation des tentatives de connexion, MFA, détection de bourrage d'identifiants.
+
+**Limites.** Couverture partielle (uniquement les logs collectés par Hudson Rock). Les dates d'infection ne sont
+pas exposées par l'API gratuite : l'outil détecte les **hausses** de compteurs.
+
+---
+
+## ransomware.live — revendications des groupes de rançongiciels
+
+**Ce que c'est.** Projet communautaire qui surveille en continu les sites de fuite (« leak sites ») des groupes de
+rançongiciels et recense les victimes revendiquées.
+
+**Ce que l'outil récupère.** Pour chaque mot-clé configuré, les revendications dont le titre, le site ou la
+description contiennent ce mot **en entier**, pour éviter les faux positifs (un sigle court ne doit pas
+déclencher sur un mot plus long qui le contient, par exemple dans la description d'une autre victime). Une nouvelle revendication = **critique**.
+
+**Quels mots-clés.** Nom court et sigle de l'établissement, de la tutelle, et de vos **prestataires critiques**
+(une attaque chez un prestataire peut exposer vos données ou ouvrir une porte vers votre réseau).
+Évitez les mots courts ou courants.
+
+**Comportements de l'API à connaître** (gérés par le script) :
+- une recherche **sans résultat renvoie HTTP 404** : ce n'est pas une panne ;
+- l'API peut répondre 404 en **IPv6** : le script force l'IPv4 pour ce site ;
+- **limite de requêtes par adresse IP** (HTTP 429) : le script espace les requêtes et garde le dernier
+  résultat ; évitez les relevés manuels répétés (tous les comptes sortant par la même IP publique comptent).
+
+---
+
+## CERT-FR — alertes et avis de sécurité
+
+**Ce que c'est.** Le centre gouvernemental de veille, d'alerte et de réponse aux attaques informatiques (ANSSI)
+publie des **alertes** (vulnérabilités activement exploitées, urgence) et des **avis** (correctifs disponibles).
+
+**Ce que l'outil récupère.** Les flux RSS publics des alertes et des avis, filtrés sur la liste des **produits de
+votre parc** (mots entiers), sur une fenêtre glissante (`days`, 30 jours par défaut).
+Nouvelle alerte = **critique** ; nouvel avis = moyen.
+
+**À adapter.** La liste `keywords` de la section `[certfr]` doit refléter **votre** parc (pare-feu, hyperviseur,
+sauvegarde, applications métier, briques web). Une liste trop large noie l'information ; trop étroite, elle fait
+manquer des alertes.
+
+---
+
+## Shodan InternetDB — ce qu'Internet voit de vos adresses
+
+**Ce que c'est.** Shodan balaie Internet en permanence. *InternetDB* est son service **gratuit, sans clé**, qui
+donne pour une adresse IP les ports ouverts, les noms d'hôtes et les CVE connues.
+
+**Ce que l'outil récupère.** Pour chaque adresse de vos plages publiques (`ips`, notation CIDR acceptée,
+1024 adresses maximum par plage) : nouveau port ouvert = moyen ; nouvelle CVE = **critique**.
+Une courte pause sépare les requêtes (environ 2 minutes pour un /24).
+
+**Limites importantes.**
+- Les données ont **quelques jours** : un port fermé hier peut encore apparaître.
+- Les **CVE sont déduites de la version annoncée** par le service (bannière) : faux positifs fréquents
+  (correctif rétroporté par la distribution). **Vérifiez la version réelle** avant d'agir.
+- Vérifiez toujours un constat **depuis l'extérieur** (connexion 4G, `nmap -Pn`), jamais depuis le réseau interne.
+
+**Ce qu'on y trouve souvent** et qui mérite attention : SNMP (161/udp) ou NTP (123/udp) exposés,
+BGP (179) ouvert à tous au lieu des seuls pairs, VPN anciens (L2TP 1701, PPTP 1723), ports d'administration web.
+
+---
+
+## Have I Been Pwned (option payante)
+
+Adresses e-mail de votre domaine présentes dans des fuites de données indexées. Nécessite un **abonnement** et une
+**clé d'API**. Voir [05-option-hibp.md](05-option-hibp.md).

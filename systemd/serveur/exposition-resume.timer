@@ -1,0 +1,10 @@
+[Unit]
+Description=Résumé quotidien de l'exposition (jours ouvrés)
+
+[Timer]
+# Assez loin du relevé de 07:10 pour ménager les limites des API
+OnCalendar=Mon..Fri 07:47
+Persistent=true
+
+[Install]
+WantedBy=timers.target

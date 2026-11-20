@@ -1,0 +1,59 @@
+# =============================================================================
+#  /etc/exposition/exposition.ini — SERVEUR DE COLLECTE
+#  Propriétaire root:exposition, droits 640 (lisible par le compte de service,
+#  modifiable par root seulement). Voir docs/03-installation-serveur.md
+# =============================================================================
+
+[general]
+# Domaine de l'établissement (obligatoire)
+domain    = example.org
+# État interne (ce qui a déjà été vu / acquitté)
+state_dir = /var/lib/exposition
+
+[hudsonrock]
+# Identifiants du domaine dans des logs d'infostealers (API gratuite)
+enabled = true
+
+[ransomwarelive]
+# Revendications sur les sites de fuite des groupes de rançongiciels (API gratuite)
+enabled  = true
+# Mots-clés recherchés en MOT ENTIER (« etab » ne déclenche pas sur « etablissement »).
+# Nom court de l'établissement, sigle, tutelle, principaux prestataires.
+# Évitez les mots trop courts ou trop courants (faux positifs).
+keywords = monetablissement, mon-sigle
+
+[certfr]
+# Alertes et avis du CERT-FR (flux RSS) qui citent un produit de VOTRE parc
+enabled = true
+days    = 30
+keywords = Fortinet, FortiOS, FortiGate, FortiClient, VMware, vCenter, ESXi,
+           Veeam, GLPI, Centreon, Wazuh, Graylog, Tomcat, MariaDB, MySQL,
+           Apache HTTP, Nginx, HAProxy, OpenSSH, WordPress, PHP, Nextcloud,
+           Microsoft Entra, Active Directory
+
+[shodan]
+# Ports et CVE connus sur vos IP publiques (Shodan InternetDB, sans clé)
+enabled = true
+# Plages CIDR et/ou adresses, séparées par des virgules (1024 adresses max par plage)
+ips = 203.0.113.0/24
+
+[hibp]
+# OPTION PAYANTE — Have I Been Pwned, recherche par domaine.
+# Laisser vide pour désactiver. Voir docs/05-option-hibp.md
+api_key =
+
+[server]
+# Dossier du rapport publié (exposition.html + exposition.json)
+out_dir = /var/lib/exposition/www
+
+# Copie directe du rapport par scp (optionnel, laisser vide sinon).
+# Méthodes recommandées : voir docs/06-publication-web.md
+scp_target =
+scp_key    =
+
+# Envoi par mail — voir docs/07-envoi-mail.md
+mail_to       = rssi@example.org
+mail_from     = exposition@example.org
+smtp_host     = relais-smtp.example.internal
+smtp_port     = 25
+smtp_starttls = false

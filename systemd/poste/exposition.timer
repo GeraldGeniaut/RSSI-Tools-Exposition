@@ -1,0 +1,10 @@
+[Unit]
+Description=Mise à jour du bloc Exposition toutes les 30 minutes
+
+[Timer]
+# Laisse le temps au réseau / VPN de monter après l'ouverture de session
+OnStartupSec=2min
+OnUnitActiveSec=30min
+
+[Install]
+WantedBy=timers.target

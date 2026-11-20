@@ -1,0 +1,13 @@
+[Unit]
+Description=Exposition externe : relevé, publication, mail si nouveauté
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=exposition
+ExecStart=/usr/local/bin/exposition.py collect --publish --mail on-change
+# Publication vers un serveur web annexe (optionnel) : le « + » exécute la commande
+# avec les droits root, sans donner ces droits au compte « exposition ».
+# Voir docs/06-publication-web.md
+#ExecStartPost=+/usr/local/sbin/publie-exposition.sh

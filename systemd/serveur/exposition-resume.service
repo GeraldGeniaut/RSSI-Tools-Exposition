@@ -1,0 +1,10 @@
+[Unit]
+Description=Exposition externe : résumé quotidien par mail
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=exposition
+ExecStart=/usr/local/bin/exposition.py collect --publish --mail always
+#ExecStartPost=+/usr/local/sbin/publie-exposition.sh

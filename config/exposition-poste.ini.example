@@ -1,0 +1,29 @@
+# =============================================================================
+#  ~/.config/crise-alertes/exposition.ini — POSTE ADMINISTRATEUR (Conky)
+#  Droits 600. Voir docs/08-poste-conky.md
+#
+#  Sur le réseau interne / VPN : le rapport est récupéré sur le serveur de collecte.
+#  Ailleurs : relevé direct des API, au plus toutes les direct_interval_h heures.
+# =============================================================================
+
+[general]
+domain    = example.org
+state_dir = ~/.cache/crise-alertes
+
+[client]
+# Compte SSH qui lit le rapport sur le serveur de collecte (clé SSH requise)
+server_host       = votre_compte@collecte.example.internal
+remote_json       = /var/lib/exposition/www/exposition.json
+# Acquittement distant (nécessite la règle sudoers, voir docs/03)
+remote_ack        = sudo -u exposition /usr/local/bin/exposition.py ack
+direct_interval_h = 6
+
+# Sources utilisées en relevé direct (mêmes valeurs que sur le serveur)
+[ransomwarelive]
+keywords = monetablissement, mon-sigle
+
+[shodan]
+ips = 203.0.113.0/24
+
+# [certfr] : liste de produits par défaut intégrée au script, ou recopier celle du serveur
+# [hibp]   : déconseillé sur un poste (la clé d'API resterait sur une machine nomade)

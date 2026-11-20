@@ -1,0 +1,6 @@
+[Unit]
+Description=Exposition externe pour Conky (serveur si joignable, sinon relevé direct)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/exposition.py client
