@@ -37,6 +37,36 @@ enabled = true
 # Plages CIDR et/ou adresses, séparées par des virgules (1024 adresses max par plage)
 ips = 203.0.113.0/24
 
+[ct]
+# Certificate Transparency (crt.sh, sans clé) : noms certifiés pour le domaine.
+# Nouveau nom, ou nom certifié par une nouvelle autorité = nouveauté.
+enabled = true
+
+[sosies]
+# Domaines ressemblants (typosquatting) : ~170 variantes testées via DNS-over-HTTPS.
+enabled = true
+# Variantes qui vous appartiennent ou sans danger (ex. example.com, example.eu)
+ignore =
+# Extensions testées pour le nom exact (avec et sans tiret)
+tlds = fr, com, net, org, eu, info, online, site, xyz, co, io, me, app
+# Mots accolés au nom : monetab-connexion.fr, connexion-monetab.fr…
+words = etudiant, etudiants, connexion, login, securite, portail, mail, support
+# Variantes supplémentaires à surveiller
+extra =
+# Résolveur DNS-over-HTTPS (format JSON)
+doh = https://cloudflare-dns.com/dns-query
+
+[rbl]
+# Listes noires DNS. Requêtes via le résolveur DNS du système : Spamhaus REFUSE les
+# résolveurs publics (Quad9, Cloudflare, Google). Testez d'abord : voir docs/02-sources.md
+enabled = true
+ip_lists     = zen.spamhaus.org, bl.spamcop.net, b.barracudacentral.org
+domain_lists = dbl.spamhaus.org
+# IP à vérifier : vide = celles de [shodan]
+ips =
+# Domaines à vérifier (vide = [general] domain)
+domains = example.org
+
 [hibp]
 # OPTION PAYANTE — Have I Been Pwned, recherche par domaine.
 # Laisser vide pour désactiver. Voir docs/05-option-hibp.md
