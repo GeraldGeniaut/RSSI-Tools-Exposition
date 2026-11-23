@@ -17,13 +17,16 @@ Un seul script, deux usages :
 
 Sources : Hudson Rock (infostealers), ransomware.live (revendications),
 CERT-FR (alertes/avis filtrés sur ton parc), Shodan InternetDB (ports/CVE de
-vos IP publiques), HIBP (optionnel, nécessite une clé d'API payante).
+vos IP publiques), crt.sh (certificats émis pour le domaine), domaines sosies
+(typosquatting, via DNS-over-HTTPS), listes noires DNS (Spamhaus, SpamCop,
+Barracuda), HIBP (optionnel, nécessite une clé d'API payante).
 
 Documentation complète : dossier docs/ du projet.
 
 Python 3.8+, bibliothèque standard uniquement.
 """
 import argparse
+import concurrent.futures
 import configparser
 import html
 import ipaddress
@@ -43,7 +46,7 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
 
-VERSION = "1.0"
+VERSION = "1.2"
 UA = {"User-Agent": "exposition/%s" % VERSION, "Accept": "application/json"}
 SEV_ORDER = {"ok": 0, "warn": 1, "crit": 2}
 
@@ -217,6 +220,242 @@ def col_shodan(cfg, domain):
             "items": items}
 
 
+# ------------------------------------------- phishing : certificats et sosies
+def _issuer_org(issuer):
+    m = re.search(r'(?:^|,\s*)O="?([^",]+)', issuer or "")
+    if m:
+        return m.group(1).strip()
+    m = re.search(r'CN="?([^",]+)', issuer or "")
+    return m.group(1).strip() if m else "?"
+
+
+def col_ct(cfg, domain):
+    """Certificate Transparency (crt.sh) : noms couverts par un certificat valide.
+    Un nouveau nom, ou un nom certifié par une nouvelle autorité, devient une nouveauté."""
+    items, certs = {}, set()
+    for n, q in enumerate(("%." + domain, domain)):
+        if n:
+            time.sleep(3)
+        data = http_get("https://crt.sh/?" + urllib.parse.urlencode(
+            {"q": q, "output": "json", "exclude": "expired"}), timeout=120)
+        for c in data or []:
+            if not isinstance(c, dict):
+                continue
+            certs.add(c.get("id"))
+            org = _issuer_org(c.get("issuer_name"))
+            for name in (c.get("name_value") or "").lower().split("\n"):
+                name = name.strip()
+                if not (name == domain or name.endswith("." + domain)):
+                    continue
+                iid = "ct:%s|%s" % (name, org)
+                nb, na = (c.get("not_before") or "")[:10], (c.get("not_after") or "")[:10]
+                if iid not in items or nb > items[iid]["date"]:
+                    items[iid] = {"id": iid, "title": "%s — certificat %s" % (name, org), "sev": "warn",
+                                  "date": nb, "url": "https://crt.sh/?q=" + urllib.parse.quote(name),
+                                  "detail": "valide jusqu'au %s" % na if na else ""}
+    names = {i["id"][3:].split("|")[0] for i in items.values()}
+    return {"metrics": {"certificats": len(certs), "noms": len(names)}, "items": list(items.values())}
+
+
+HOMOGLYPHES = {"o": "0", "i": "1l", "l": "1i", "e": "3", "a": "4", "s": "5", "u": "v", "c": "k", "g": "q",
+               "q": "g", "b": "d", "d": "b"}
+MULTI = [("rn", "m"), ("m", "rn"), ("vv", "w"), ("w", "vv"), ("cl", "d"), ("d", "cl")]
+AZERTY = ["azertyuiop", "qsdfghjklm", "wxcvbn"]
+VOISINS = {ch: [row[j] for j in (i - 1, i + 1) if 0 <= j < len(row)] for row in AZERTY for i, ch in enumerate(row)}
+SOSIES_TLDS = ["fr", "com", "net", "org", "eu", "info", "online", "site", "xyz", "co", "io", "me", "app"]
+SOSIES_MOTS = ["etudiant", "etudiants", "connexion", "login", "securite", "portail", "mail", "support"]
+DOH_DEFAULT = "https://cloudflare-dns.com/dns-query"
+RTYPE = {"A": 1, "NS": 2, "MX": 15}
+_LABEL_OK = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def sosies(domain, tlds, mots, extra=()):
+    """Variantes du domaine qu'un attaquant pourrait enregistrer (fautes de frappe, homoglyphes…)."""
+    label, _, suffix = domain.lower().partition(".")
+    L, n = set(), len(label)
+    for i, ch in enumerate(label):
+        L.add(label[:i] + label[i + 1:])                                    # lettre oubliée
+        L.add(label[:i] + ch + label[i:])                                   # lettre doublée
+        if i < n - 1:
+            L.add(label[:i] + label[i + 1] + ch + label[i + 2:])            # lettres inversées
+        for r in HOMOGLYPHES.get(ch, "") + "".join(VOISINS.get(ch, [])):    # homoglyphe, touche voisine
+            L.add(label[:i] + r + label[i + 1:])
+    for a, b in MULTI:
+        if a in label:
+            L.add(label.replace(a, b))
+    L.add(label.replace("-", ""))
+    for m in mots:
+        L.add(label + "-" + m)
+        L.add(m + "-" + label)
+    L = {x for x in L if x != label and _LABEL_OK.match(x) and "--" not in x}
+    out = {"%s.%s" % (x, t) for x in L for t in dict.fromkeys([suffix, "com"])}
+    for t in tlds:
+        out.add("%s.%s" % (label, t))
+        out.add("%s.%s" % (label.replace("-", ""), t))
+    out.update(e.lower() for e in extra)
+    out.discard(domain.lower())
+    return sorted(out)
+
+
+def doh(url, name, rtype):
+    """Résolution DNS-over-HTTPS (format JSON) : indépendante du DNS local."""
+    d = http_get(url + "?" + urllib.parse.urlencode({"name": name, "type": rtype}),
+                 headers={"Accept": "application/dns-json"}, timeout=10)
+    ans = [a.get("data", "") for a in d.get("Answer") or [] if a.get("type") == RTYPE[rtype]]
+    return d.get("Status"), ans
+
+
+def col_sosies(cfg, domain):
+    sec = "sosies"
+    tlds = cfg_list(cfg, sec, "tlds", SOSIES_TLDS)
+    mots = cfg_list(cfg, sec, "words", SOSIES_MOTS)
+    ignore = {x.lower() for x in cfg_list(cfg, sec, "ignore", [])}
+    url = cfg.get(sec, "doh", fallback=DOH_DEFAULT) if cfg.has_section(sec) else DOH_DEFAULT
+    cands = [d for d in sosies(domain, tlds, mots, cfg_list(cfg, sec, "extra", [])) if d not in ignore]
+    items, regs, mx_n, errs = [], 0, 0, 0
+    for n, d in enumerate(cands):
+        if n:
+            time.sleep(0.1)
+        try:
+            status, ns = doh(url, d, "NS")
+        except Exception:
+            errs += 1
+            continue
+        if status != 0 or not ns:  # 3 = NXDOMAIN : libre ; 2 = SERVFAIL : délégation cassée, ignorée
+            continue
+        regs += 1
+        try:
+            mx = [m.split()[-1].rstrip(".") for m in doh(url, d, "MX")[1]]
+            mx = [m for m in mx if m and m != "."]   # « MX 0 . » = le domaine refuse le mail
+            a = doh(url, d, "A")[1]
+        except Exception:
+            mx, a = [], []
+        who = "https://who.is/whois/" + d
+        items.append({"id": "sosie:" + d, "title": "%s est enregistré" % d, "sev": "warn", "date": "",
+                      "url": who, "detail": "IP : %s" % ", ".join(a[:3]) if a else "sans site web"})
+        if mx:
+            mx_n += 1
+            items.append({"id": "sosie:%s:mx" % d, "title": "%s peut envoyer/recevoir du mail" % d,
+                          "sev": "crit", "date": "", "url": who, "detail": "MX : %s" % ", ".join(mx[:3])})
+    if cands and errs > len(cands) // 2:
+        raise RuntimeError("résolveur DoH injoignable (%d/%d échecs)" % (errs, len(cands)))
+    return {"metrics": {"testés": len(cands), "enregistrés": regs, "avec_mx": mx_n}, "items": items}
+
+
+# ----------------------------------------------------- listes noires DNS (RBL)
+# Interrogées avec le résolveur DNS du système : Spamhaus refuse les résolveurs
+# publics (Quad9, Cloudflare, Google…) et répond alors 127.255.255.x.
+SPAMHAUS_ZEN = {"127.0.0.2": ("SBL : source de spam", "crit"),
+                "127.0.0.3": ("CSS : envoi de spam", "crit"),
+                "127.0.0.4": ("XBL : machine infectée derrière cette IP", "crit"),
+                "127.0.0.5": ("XBL : machine infectée derrière cette IP", "crit"),
+                "127.0.0.6": ("XBL : machine infectée derrière cette IP", "crit"),
+                "127.0.0.7": ("XBL : machine infectée derrière cette IP", "crit"),
+                "127.0.0.9": ("DROP : réseau détourné", "crit"),
+                "127.0.0.10": None, "127.0.0.11": None}  # PBL : plage sans envoi de mail direct, normal
+SPAMHAUS_DBL = {"127.0.1.2": ("domaine de spam", "crit"), "127.0.1.4": ("domaine de phishing", "crit"),
+                "127.0.1.5": ("domaine de malware", "crit"), "127.0.1.6": ("serveur de commande de botnet", "crit"),
+                "127.0.1.102": ("domaine légitime détourné pour du spam", "crit"),
+                "127.0.1.103": ("domaine légitime détourné : redirection", "crit"),
+                "127.0.1.104": ("domaine légitime détourné : phishing", "crit"),
+                "127.0.1.105": ("domaine légitime détourné : malware", "crit"),
+                "127.0.1.106": ("domaine légitime détourné : botnet", "crit")}
+RBL_CODES = {"zen.spamhaus.org": SPAMHAUS_ZEN, "dbl.spamhaus.org": SPAMHAUS_DBL}
+RBL_TEST = {"dbl.spamhaus.org": ("dbltest.com", "127.0.1.2")}  # défaut : 2.0.0.127 -> 127.0.0.2
+RBL_URL = {"zen.spamhaus.org": "https://check.spamhaus.org/results?query=%s",
+           "dbl.spamhaus.org": "https://check.spamhaus.org/results?query=%s",
+           "bl.spamcop.net": "https://www.spamcop.net/w3m?action=checkblock&ip=%s"}
+RBL_IP_LISTS = ["zen.spamhaus.org", "bl.spamcop.net", "b.barracudacentral.org"]
+RBL_DOMAIN_LISTS = ["dbl.spamhaus.org"]
+
+
+class RblRefus(Exception):
+    pass
+
+
+def dnsbl(q):
+    """Adresses renvoyées pour q ; [] si le nom n'existe pas (= non listé)."""
+    try:
+        addrs = sorted(set(socket.gethostbyname_ex(q)[2]))
+    except socket.gaierror as e:
+        if e.errno in (socket.EAI_NONAME, getattr(socket, "EAI_NODATA", -5)):
+            return []
+        raise
+    except socket.herror as e:
+        if e.errno in (1, 4):  # HOST_NOT_FOUND, NO_DATA
+            return []
+        raise
+    if any(a.startswith("127.255.255.") for a in addrs):  # Spamhaus : requête refusée / quota
+        raise RblRefus(addrs[0])
+    return addrs
+
+
+def _rbl_test(lst):
+    name, want = RBL_TEST.get(lst, ("2.0.0.127", "127.0.0.2"))
+    try:
+        got = dnsbl("%s.%s" % (name, lst))
+    except RblRefus as e:
+        return "refusée (%s)" % e
+    except OSError as e:
+        return "injoignable (%s)" % e
+    return "" if want in got else "test sans réponse"
+
+
+def col_rbl(cfg, domain):
+    sec = "rbl"
+    ip_lists = cfg_list(cfg, sec, "ip_lists", RBL_IP_LISTS)
+    dom_lists = cfg_list(cfg, sec, "domain_lists", RBL_DOMAIN_LISTS)
+    ips = expand_ips(cfg_list(cfg, sec, "ips", []) or cfg_list(cfg, "shodan", "ips", []))
+    ips = [i for i in ips if ipaddress.ip_address(i).version == 4]
+    doms = cfg_list(cfg, sec, "domains", [domain])
+    ko = {}
+    for lst in ip_lists + dom_lists:  # adresse de test : la liste répond-elle, et nous accepte-t-elle ?
+        err = _rbl_test(lst)
+        if err:
+            ko[lst] = err
+    jobs = [(lst, ip, "%s.%s" % (".".join(reversed(ip.split("."))), lst))
+            for lst in ip_lists if lst not in ko for ip in ips]
+    jobs += [(lst, d, "%s.%s" % (d, lst)) for lst in dom_lists if lst not in ko for d in doms]
+
+    def run(job):
+        try:
+            return job, dnsbl(job[2]), None
+        except RblRefus as e:
+            return job, [], "refusée (%s)" % e
+        except OSError as e:
+            return job, [], "erreur DNS (%s)" % e
+
+    items, listed = [], set()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as ex:
+        for (lst, cible, _), addrs, err in ex.map(run, jobs):
+            if err:
+                ko.setdefault(lst, err)
+                continue
+            codes = RBL_CODES.get(lst)
+            for a in addrs:
+                if codes is not None:
+                    if a not in codes:
+                        meaning = ("code %s" % a, "warn")
+                    elif codes[a] is None:
+                        continue  # PBL
+                    else:
+                        meaning = codes[a]
+                else:
+                    meaning = ("listée", "warn")
+                listed.add(cible)
+                url = RBL_URL.get(lst, "https://mxtoolbox.com/SuperTool.aspx?action=blacklist%%3a%s") % cible
+                items.append({"id": "rbl:%s:%s:%s" % (lst, cible, a), "sev": meaning[1], "date": "", "url": url,
+                              "title": "%s sur %s" % (cible, lst), "detail": meaning[0]})
+    total = len(ip_lists) + len(dom_lists)
+    if ko and len(ko) == total:
+        raise RuntimeError("aucune liste utilisable : " + "; ".join("%s %s" % kv for kv in ko.items()))
+    for lst, err in ko.items():  # liste en échec : visible dans le rapport, sans bloquer les autres
+        items.append({"id": "rbl-ko:%s" % lst, "sev": "warn", "date": "", "url": "",
+                      "title": "liste %s inutilisable" % lst, "detail": err})
+    return {"metrics": {"listes": "%d/%d" % (total - len(ko), total), "ip": len(ips),
+                        "domaines": len(doms), "listées": len(listed)}, "items": items}
+
+
 def col_hibp(cfg, domain):
     key = cfg.get("hibp", "api_key", fallback="").strip() if cfg.has_section("hibp") else ""
     if not key:
@@ -247,6 +486,9 @@ SOURCES = [  # nom, libellé, fonction
     ("ransomwarelive", "ransomware.live — revendications", col_ransomwarelive),
     ("certfr", "CERT-FR — alertes et avis", col_certfr),
     ("shodan", "Shodan InternetDB — IP publiques", col_shodan),
+    ("ct", "Certificats — crt.sh (Certificate Transparency)", col_ct),
+    ("sosies", "Sosies — domaines ressemblants (typosquatting)", col_sosies),
+    ("rbl", "Listes noires — Spamhaus, SpamCop, Barracuda", col_rbl),
     ("hibp", "Have I Been Pwned — domaine", col_hibp),
 ]
 HR_LABELS = {"employees": ("Employés compromis", "crit"), "users": ("Usagers compromis", "warn"),
@@ -392,7 +634,9 @@ def do_ack(cfg):
 LEVEL_WORD = {"ok": "stable", "warn": "hausse", "crit": "CRITIQUE"}
 METRIC_SHORT = {"employees": "employés", "users": "usagers", "third_parties": "tiers", "totalUrls": "url",
                 "revendications": "revendic.", "alertes": "alertes", "avis": "avis", "ip": "ip",
-                "ports": "ports", "cve": "cve", "exposées": "exposées", "adresses": "adresses", "apparitions": "appar."}
+                "ports": "ports", "cve": "cve", "exposées": "exposées", "adresses": "adresses", "apparitions": "appar.",
+                "certificats": "certif.", "noms": "noms", "testés": "testés", "enregistrés": "enreg.",
+                "avec_mx": "mx", "listes": "listes", "domaines": "dom.", "listées": "listées"}
 CONKY_COL = {"ok": "green", "warn": "orange", "crit": "red"}
 
 
