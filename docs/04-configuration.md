@@ -39,6 +39,33 @@ continuation indentées).
 | `enabled` | `true` | actif seulement si `ips` est renseigné |
 | `ips` | — | adresses et plages CIDR publiques (max 1024 adresses par plage) |
 
+## [ct]
+
+| Clé | Défaut | Description |
+|---|---|---|
+| `enabled` | `true` | interroge crt.sh pour `%.domaine` et `domaine` (certificats valides uniquement) |
+
+## [sosies]
+
+| Clé | Défaut | Description |
+|---|---|---|
+| `enabled` | `true` | génère les variantes du domaine et teste leur enregistrement (NS) et leur MX |
+| `ignore` | vide | variantes à ne pas surveiller (domaines vous appartenant) |
+| `tlds` | `fr, com, net, org, eu, info, online, site, xyz, co, io, me, app` | extensions testées pour le nom exact |
+| `words` | `etudiant, etudiants, connexion, login, securite, portail, mail, support` | mots accolés au nom |
+| `extra` | vide | variantes supplémentaires à tester |
+| `doh` | `https://cloudflare-dns.com/dns-query` | résolveur DNS-over-HTTPS (réponses JSON) |
+
+## [rbl]
+
+| Clé | Défaut | Description |
+|---|---|---|
+| `enabled` | `true` | interroge les listes noires DNS avec le résolveur du système |
+| `ip_lists` | `zen.spamhaus.org, bl.spamcop.net, b.barracudacentral.org` | listes d'adresses IP |
+| `domain_lists` | `dbl.spamhaus.org` | listes de domaines |
+| `ips` | vide = `[shodan] ips` | adresses IPv4 à vérifier |
+| `domains` | `[general] domain` | domaines à vérifier |
+
 ## [hibp] (option payante)
 
 | Clé | Défaut | Description |
