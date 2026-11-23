@@ -14,7 +14,8 @@ adresses de votre domaine présentes dans des fuites (Have I Been Pwned).
 
 ```
                      Internet (API publiques)
-   Hudson Rock · ransomware.live · CERT-FR · Shodan InternetDB · [HIBP]
+   Hudson Rock · ransomware.live · CERT-FR · Shodan InternetDB
+   crt.sh · domaines sosies (DoH) · listes noires DNS · [HIBP]
                 │                                   │ (hors réseau interne)
                 ▼                                   ▼
    ┌──────────────────────────┐   scp (lecture)   ┌──────────────────────────┐
@@ -75,3 +76,5 @@ Puis suivre [docs/03](docs/03-installation-serveur.md) pour le mail, la planific
 
 À définir par l'établissement diffuseur (une licence libre de type MIT ou Licence Ouverte facilite la réutilisation
 entre établissements).
+
+Historique des versions : [CHANGELOG.md](CHANGELOG.md)
