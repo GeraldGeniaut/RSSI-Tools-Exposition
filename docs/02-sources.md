@@ -153,6 +153,35 @@ sauf votre relais de messagerie, puis demandez la radiation.
 
 ---
 
+## AbuseIPDB — vos adresses signalées comme sources d'attaques
+
+**Ce que c'est.** Base collaborative où administrateurs et pots de miel signalent les IP qui les attaquent
+(balayage de ports, force brute SSH/RDP, spam web…). Clé d'API **gratuite** (1 000 vérifications d'IP par jour,
+100 vérifications de plage par jour).
+
+**Ce que l'outil récupère.** Un appel *check-block* par /24 de vos plages : chaque adresse signalée sur la période
+(`max_age_days`) devient une nouveauté, **critique** si le score de confiance AbuseIPDB atteint `crit_score`.
+Une adresse de NAT signalée signifie généralement qu'une machine interne attaque l'extérieur : à investiguer.
+
+**Limites.** Un signalement isolé peut être une erreur (score faible) ; les signalements visent l'IP publique,
+il faut ensuite retrouver la machine interne dans les journaux du pare-feu.
+
+---
+
+## abuse.ch — URLhaus et ThreatFox
+
+**Ce que c'est.** Deux bases gratuites d'abuse.ch, alimentées par des chercheurs en sécurité :
+**URLhaus** recense les URL qui distribuent des malwares, **ThreatFox** les indicateurs de compromission
+(serveurs de commande de botnets, Cobalt Strike…). Une Auth-Key gratuite et commune est nécessaire.
+
+**Ce que l'outil récupère.** Pour vos domaines et quelques IP choisies : toute URL connue d'URLhaus
+(**critique** si encore en ligne — typique d'un site web piraté) et toute entrée ThreatFox (**critique**).
+
+**Limites.** Seules les cibles listées sont interrogées (une requête par cible et par base) : déclarez vos
+sorties NAT et vos serveurs exposés, pas tout le bloc.
+
+---
+
 ## Have I Been Pwned (option payante)
 
 Adresses e-mail de votre domaine présentes dans des fuites de données indexées. Nécessite un **abonnement** et une

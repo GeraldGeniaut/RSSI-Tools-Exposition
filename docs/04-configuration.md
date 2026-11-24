@@ -66,6 +66,23 @@ continuation indentées).
 | `ips` | vide = `[shodan] ips` | adresses IPv4 à vérifier |
 | `domains` | `[general] domain` | domaines à vérifier |
 
+## [abuseipdb]
+
+| Clé | Défaut | Description |
+|---|---|---|
+| `api_key` | vide = désactivé | clé gratuite AbuseIPDB |
+| `networks` | `[shodan] ips` | plages vérifiées par blocs de /24 (offre gratuite : un appel par /24, 20 max) ; adresses privées ignorées |
+| `max_age_days` | `30` | ancienneté maximale des signalements |
+| `crit_score` | `50` | score de confiance (%) à partir duquel un signalement est critique |
+
+## [abusech]
+
+| Clé | Défaut | Description |
+|---|---|---|
+| `auth_key` | vide = désactivé | Auth-Key gratuite abuse.ch, commune à URLhaus et ThreatFox |
+| `domains` | `[general] domain` | domaines interrogés |
+| `ips` | vide | IP interrogées une à une (sorties NAT, relais de messagerie) |
+
 ## [hibp] (option payante)
 
 | Clé | Défaut | Description |
