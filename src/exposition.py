@@ -19,7 +19,8 @@ Sources : Hudson Rock (infostealers), ransomware.live (revendications),
 CERT-FR (alertes/avis filtrés sur ton parc), Shodan InternetDB (ports/CVE de
 vos IP publiques), crt.sh (certificats émis pour le domaine), domaines sosies
 (typosquatting, via DNS-over-HTTPS), listes noires DNS (Spamhaus, SpamCop,
-Barracuda), HIBP (optionnel, nécessite une clé d'API payante).
+Barracuda), signalements d'abus (AbuseIPDB, URLhaus, ThreatFox ; clés gratuites),
+HIBP (optionnel, nécessite une clé d'API payante).
 
 Documentation complète : dossier docs/ du projet.
 
@@ -46,7 +47,7 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
 
-VERSION = "1.2"
+VERSION = "1.3"
 UA = {"User-Agent": "exposition/%s" % VERSION, "Accept": "application/json"}
 SEV_ORDER = {"ok": 0, "warn": 1, "crit": 2}
 
@@ -77,6 +78,14 @@ def http_get(url, headers=None, timeout=30, raw=False):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         data = r.read()
     return data if raw else json.loads(data.decode("utf-8", "replace") or "null")
+
+
+def http_post(url, body, headers=None, timeout=30):
+    h = dict(UA)
+    h.update(headers or {})
+    req = urllib.request.Request(url, data=body, headers=h, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8", "replace") or "null")
 
 
 def short_err(e):
@@ -456,6 +465,88 @@ def col_rbl(cfg, domain):
                         "domaines": len(doms), "listées": len(listed)}, "items": items}
 
 
+# ------------------------------------------------- signalements d'abus (clés)
+def _key(cfg, sec, name):
+    return cfg.get(sec, name, fallback="").strip() if cfg.has_section(sec) else ""
+
+
+def _networks(cfg, sec):
+    """Plages à vérifier : [sec] networks, sinon les entrées de [shodan] ips (adresse seule = /32)."""
+    out = []
+    for e in cfg_list(cfg, sec, "networks", []) or cfg_list(cfg, "shodan", "ips", []):
+        net = ipaddress.ip_network(e if "/" in e else e + "/32", strict=False)
+        if net.version != 4 or net.is_private:
+            continue
+        out.extend(net.subnets(new_prefix=24) if net.prefixlen < 24 else [net])  # offre gratuite : /24 max
+    return [str(n) for n in dict.fromkeys(out)]
+
+
+def col_abuseipdb(cfg, domain):
+    """AbuseIPDB : vos adresses ont-elles été signalées comme source d'attaques ?"""
+    sec = "abuseipdb"
+    key = _key(cfg, sec, "api_key")
+    days = cfg.getint(sec, "max_age_days", fallback=30) if cfg.has_section(sec) else 30
+    seuil = cfg.getint(sec, "crit_score", fallback=50) if cfg.has_section(sec) else 50
+    nets = _networks(cfg, sec)
+    if len(nets) > 20:
+        raise ValueError("trop de plages (%d /24) pour l'offre gratuite" % len(nets))
+    items = []
+    for n, net in enumerate(nets):
+        if n:
+            time.sleep(1)
+        d = http_get("https://api.abuseipdb.com/api/v2/check-block?" + urllib.parse.urlencode(
+            {"network": net, "maxAgeInDays": days}), headers={"Key": key})
+        for r in (d.get("data") or {}).get("reportedAddress") or []:
+            ip, score = r.get("ipAddress", "?"), int(r.get("abuseConfidenceScore") or 0)
+            items.append({"id": "abuseipdb:" + ip, "sev": "crit" if score >= seuil else "warn",
+                          "title": "%s signalée %s fois" % (ip, r.get("numReports", "?")),
+                          "date": (r.get("mostRecentReport") or "")[:10],
+                          "url": "https://www.abuseipdb.com/check/" + ip,
+                          "detail": "score de confiance %d %%" % score})
+    return {"metrics": {"plages": len(nets), "signalées": len(items)}, "items": items}
+
+
+def col_abusech(cfg, domain):
+    """abuse.ch : URLhaus (URL de distribution de malware) et ThreatFox (indicateurs de compromission)."""
+    sec = "abusech"
+    hdr = {"Auth-Key": _key(cfg, sec, "auth_key")}
+    doms = cfg_list(cfg, sec, "domains", [domain])
+    ips = [str(ipaddress.ip_address(i)) for i in cfg_list(cfg, sec, "ips", [])]
+    items, n = [], 0
+    for host in doms + ips:
+        if n:
+            time.sleep(1)
+        n += 1
+        d = http_post("https://urlhaus-api.abuse.ch/v1/host/", urllib.parse.urlencode({"host": host}).encode(),
+                      headers=hdr)
+        st = (d or {}).get("query_status")
+        if st == "ok":
+            for u in d.get("urls") or []:
+                online = u.get("url_status") == "online"
+                items.append({"id": "urlhaus:%s" % u.get("id"), "sev": "crit" if online else "warn",
+                              "title": "URLhaus : %s" % u.get("url", "?"), "date": (u.get("date_added") or "")[:10],
+                              "url": u.get("urlhaus_reference") or "https://urlhaus.abuse.ch/host/%s/" % host,
+                              "detail": "%s, %s" % (u.get("threat") or "malware",
+                                                    "EN LIGNE" if online else "hors ligne")})
+        elif st not in ("no_results", "no_result", "invalid_host"):
+            raise RuntimeError("URLhaus : %s" % st)
+        time.sleep(1)
+        d = http_post("https://threatfox-api.abuse.ch/api/v1/", json.dumps(
+            {"query": "search_ioc", "search_term": host, "exact_match": True}).encode(),
+            headers=dict(hdr, **{"Content-Type": "application/json"}))
+        st = (d or {}).get("query_status")
+        if st == "ok":
+            for i in d.get("data") or []:
+                items.append({"id": "threatfox:%s" % i.get("id"), "sev": "crit",
+                              "title": "ThreatFox : %s" % i.get("ioc", host), "date": (i.get("first_seen") or "")[:10],
+                              "url": "https://threatfox.abuse.ch/ioc/%s/" % i.get("id"),
+                              "detail": "%s (%s)" % (i.get("malware_printable") or "?", i.get("threat_type") or "?")})
+        elif st not in ("no_results", "no_result"):
+            raise RuntimeError("ThreatFox : %s" % st)
+    return {"metrics": {"cibles": len(doms) + len(ips), "urlhaus": sum(i["id"].startswith("urlhaus") for i in items),
+                        "threatfox": sum(i["id"].startswith("threatfox") for i in items)}, "items": items}
+
+
 def col_hibp(cfg, domain):
     key = cfg.get("hibp", "api_key", fallback="").strip() if cfg.has_section("hibp") else ""
     if not key:
@@ -489,6 +580,8 @@ SOURCES = [  # nom, libellé, fonction
     ("ct", "Certificats — crt.sh (Certificate Transparency)", col_ct),
     ("sosies", "Sosies — domaines ressemblants (typosquatting)", col_sosies),
     ("rbl", "Listes noires — Spamhaus, SpamCop, Barracuda", col_rbl),
+    ("abuseipdb", "AbuseIPDB — signalements d'attaques", col_abuseipdb),
+    ("abusech", "abuse.ch — URLhaus et ThreatFox", col_abusech),
     ("hibp", "Have I Been Pwned — domaine", col_hibp),
 ]
 HR_LABELS = {"employees": ("Employés compromis", "crit"), "users": ("Usagers compromis", "warn"),
@@ -505,6 +598,9 @@ def cfg_list(cfg, section, key, default):
 def enabled(cfg, name):
     if name == "hibp":
         return cfg.has_section("hibp") and bool(cfg.get("hibp", "api_key", fallback="").strip())
+    if name in ("abuseipdb", "abusech"):  # clé obligatoire
+        if not _key(cfg, name, "api_key" if name == "abuseipdb" else "auth_key"):
+            return False
     if name == "shodan" and not cfg_list(cfg, "shodan", "ips", []):
         return False  # pas d'IP publique déclarée
     return cfg.getboolean(name, "enabled", fallback=True) if cfg.has_section(name) else True
@@ -636,7 +732,9 @@ METRIC_SHORT = {"employees": "employés", "users": "usagers", "third_parties": "
                 "revendications": "revendic.", "alertes": "alertes", "avis": "avis", "ip": "ip",
                 "ports": "ports", "cve": "cve", "exposées": "exposées", "adresses": "adresses", "apparitions": "appar.",
                 "certificats": "certif.", "noms": "noms", "testés": "testés", "enregistrés": "enreg.",
-                "avec_mx": "mx", "listes": "listes", "domaines": "dom.", "listées": "listées"}
+                "avec_mx": "mx", "listes": "listes", "domaines": "dom.", "listées": "listées",
+                "plages": "plages", "signalées": "signalées", "cibles": "cibles", "urlhaus": "urlhaus",
+                "threatfox": "threatfox"}
 CONKY_COL = {"ok": "green", "warn": "orange", "crit": "red"}
 
 
