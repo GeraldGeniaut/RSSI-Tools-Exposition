@@ -67,6 +67,24 @@ ips =
 # Domaines à vérifier (vide = [general] domain)
 domains = example.org
 
+[abuseipdb]
+# Vos IP signalées comme sources d'attaques. Clé GRATUITE (abuseipdb.com > Account > API).
+# Laisser vide pour désactiver.
+api_key =
+# Plages à vérifier (par /24, un appel chacune) : vide = celles de [shodan]
+networks =
+max_age_days = 30
+# Score de confiance AbuseIPDB (%) à partir duquel le signalement est critique
+crit_score = 50
+
+[abusech]
+# URLhaus (URL de distribution de malware) et ThreatFox (indicateurs de compromission).
+# Auth-Key GRATUITE commune (auth.abuse.ch). Laisser vide pour désactiver.
+auth_key =
+domains = example.org
+# IP interrogées une à une : sorties NAT, relais de messagerie… (pas tout le bloc)
+ips = 203.0.113.10, 203.0.113.20
+
 [hibp]
 # OPTION PAYANTE — Have I Been Pwned, recherche par domaine.
 # Laisser vide pour désactiver. Voir docs/05-option-hibp.md
